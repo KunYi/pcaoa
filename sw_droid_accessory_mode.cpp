@@ -47,9 +47,14 @@
 
 /*
  * from adk2012/board/library/usbh.h
+ * usb accssory filter in ADK2012.apk
+ * see source ./res/xml/usb_accessory_filter.xml
+ *   Manufacture "Google, Inc."
+ *   Model       "DemoKit"
+ *   Version     "2.0"
  */
 #define ADK2012_MANUFACTURE_STRING			("Google, Inc.")
-#define ADK2012_MODE_STRING				("DemoKit")
+#define ADK2012_MODEL_STRING				("DemoKit")
 #define ADK2012_DESCRIPTION_STRING			("DemoKit Arduino Board")
 #define ADK2012_VERSION_STRING				("2.0")
 #define ADK2012_URI_STRING				("http://www.android.com")
@@ -170,7 +175,7 @@ int main() {
 		setProto(handle, AOA_PROTO_SERIAL_INDEX, "12345678-001");
 #else
 		setProto(handle, AOA_PROTO_MANUFACTURE_INDEX, ADK2012_MANUFACTURE_STRING);
-		setProto(handle, AOA_PROTO_MODEL_INDEX, ADK2012_MODE_STRING);
+		setProto(handle, AOA_PROTO_MODEL_INDEX, ADK2012_MODEL_STRING);
 		setProto(handle, AOA_PROTO_DESCRIPTION_INDEX, ADK2012_DESCRIPTION_STRING);
 		setProto(handle, AOA_PROTO_VERSION_INDEX, ADK2012_VERSION_STRING);
 		setProto(handle, AOA_PROTO_URI_INDEX, ADK2012_URI_STRING);
