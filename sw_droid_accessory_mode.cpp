@@ -6,14 +6,15 @@
 #include <alsa/asoundlib.h>
 #include <pthread.h>
 
-/* Samsung N7100 04e8:6866 */
+#if 0
+/* Samsung N7100 VID:PID(04e8:6866) */
 #define VID_TEST (0x04e8)
 #define PID_TEST (0x6866)
-/* Xaomi hougmi */
-/* not support accessory mode
+#else
+/* Xaomi hougmi  VID:PID(2717:1220) */
 #define VID_TEST (0x2717)
 #define PID_TEST (0x1220)
-*/
+#endif
 
 /* 
  * AOA 2.0 protocol
@@ -130,7 +131,7 @@ static AdkSettings settings = {0};
  *
  */
 
-int getProtocl(libusb_device_handle *dev, uint16_t* protocol) {
+int getProtocol(libusb_device_handle *dev, uint16_t* protocol) {
 	return libusb_control_transfer(dev,
 		AOA_CTRL_IN | LIBUSB_RECIPIENT_DEVICE, // bmRequestType
 		AOA_REQ_PROTOCOL, // bRequest
@@ -178,6 +179,7 @@ int setAudioMode(libusb_device_handle *dev, bool mode)
 			500);
 }
 
+const char* formatLibUsbError(int errcode);
 bool isInteresting(libusb_device* device, uint16_t vid, uint16_t pid);
 bool isAccessoryDevice(libusb_device_descriptor  *desc);
 void prt_dev_desc(libusb_device_descriptor *desc);
@@ -211,6 +213,98 @@ static void initSettings(void) {
 	strcpy(settings.alramTune, "Alram.ogg");
 }
 
+static libusb_device*  findInterseting(libusb_device **list, size_t sz)
+{
+	int rc = 0;
+	libusb_device* dev = NULL;
+
+	for (size_t idx = 0; idx < sz; ++idx) {
+		libusb_device *device = list[idx];
+		libusb_device_descriptor desc = {0};
+		rc = libusb_get_device_descriptor(device, &desc);
+		assert(rc == 0);
+		if (isInteresting(device, VID_TEST, PID_TEST)) {
+			dev = device;
+		}
+	}
+	return dev;
+}
+
+static libusb_device*  findAccessoryDevice(libusb_device **list, size_t sz)
+{
+	int rc = 0;
+	libusb_device* dev = NULL;
+
+	for (size_t idx = 0; idx < sz; ++idx) {
+		libusb_device *device = list[idx];
+		libusb_device_descriptor desc = {0};
+		rc = libusb_get_device_descriptor(device, &desc);
+		assert(rc == 0);
+		if (isAccessoryDevice(&desc)) {
+			dev = device;
+			break;
+		}
+	}
+	return dev;
+}
+
+static int enableAccessoryMode(libusb_device *dev)
+{
+	int ret = 0;
+	int rc = 0;
+	libusb_device_descriptor desc = {0};
+	rc = libusb_get_device_descriptor(dev, &desc);
+	assert(rc == 0);
+	printf("found a device, %04x:%04x\n", desc.idVendor, desc.idProduct);
+
+	libusb_device_handle* handle = NULL;
+
+	int err = 0;
+	err = libusb_open(dev, &handle);
+	if (err < 0) {
+		ret = -1;
+		printf("open device failed, errcode:%d, description:%s\n",
+				err, formatLibUsbError(err));
+		goto exit;
+	}
+
+	uint16_t protocol;
+	err = getProtocol(handle, &protocol);
+	if (err < 0) {
+		ret = -2;
+		printf("it is not android-powerd device, errcode:%d, description:%s\n",
+				err, formatLibUsbError(err));
+		goto error;
+	}
+
+#if 0
+	setProto(handle, AOA_PROTO_MANUFACTURE_INDEX, "KunYi Chen");
+	setProto(handle, AOA_PROTO_MODEL_INDEX, "PC Host");
+	setProto(handle, AOA_PROTO_DESCRIPTION_INDEX, "PC Host to emulation an android accessory");
+	setProto(handle, AOA_PROTO_VERSION_INDEX, "0.1");
+	setProto(handle, AOA_PROTO_URI_INDEX, "kunyichen.wordpress.com");
+	setProto(handle, AOA_PROTO_SERIAL_INDEX, "12345678-001");
+#else
+	setProto(handle, AOA_PROTO_MANUFACTURE_INDEX, ADK2012_MANUFACTURE_STRING);
+	setProto(handle, AOA_PROTO_MODEL_INDEX, ADK2012_MODEL_STRING);
+	setProto(handle, AOA_PROTO_DESCRIPTION_INDEX, ADK2012_DESCRIPTION_STRING);
+	setProto(handle, AOA_PROTO_VERSION_INDEX, ADK2012_VERSION_STRING);
+	setProto(handle, AOA_PROTO_URI_INDEX, ADK2012_URI_STRING);
+	setProto(handle, AOA_PROTO_SERIAL_INDEX, ADK2012_SERIAL_STRING);
+#endif
+
+	if (protocol == 2) {
+		setAudioMode(handle, true);
+	}
+	switchToAccessoryMode(handle);
+
+error:
+	if (handle)
+		libusb_close(handle);
+exit:
+	return ret;
+}
+
 int main() {
 	int rc = 0;
 	long tid = 1;
@@ -223,65 +317,8 @@ int main() {
 	pthread_create(&threads[0], NULL, prtPThread, (void*)&tid);
 	count = libusb_get_device_list(context, &list);
 	assert(count > 0);
-	for (size_t idx = 0; idx < count; ++idx) {
-		libusb_device *device = list[idx];
-		libusb_device_descriptor desc = {0};
-		rc = libusb_get_device_descriptor(device, &desc);
-		assert(rc == 0);
-		if (isInteresting(device, VID_TEST, PID_TEST)) {
-			found = device;
-		}
-	}
-
-// to enable accessory mode
-	if(found) {
-		libusb_device_descriptor desc = {0};
-		rc = libusb_get_device_descriptor(found, &desc);
-		assert(rc == 0);
-		printf("found a device, %04x:%04x\n", desc.idVendor, desc.idProduct);
-
-		libusb_device_handle* handle = NULL;
-
-		int err = 0;
-		err = libusb_open(found, &handle);
-		if (err < 0) {
-			printf("open device failed\n");
-			goto error;
-		}
-
-		uint16_t protocol;
-		err = getProtocl(handle, &protocol);
-		if (err < 0) {
-			printf("it is not a ndroid-powerd device\n");
-			goto error;
-		}
-
-#if 0
-		setProto(handle, AOA_PROTO_MANUFACTURE_INDEX, "KunYi Chen");
-		setProto(handle, AOA_PROTO_MODEL_INDEX, "PC Host");
-		setProto(handle, AOA_PROTO_DESCRIPTION_INDEX, "PC Host to emulation an android accessory");
-		setProto(handle, AOA_PROTO_VERSION_INDEX, "0.1");
-		setProto(handle, AOA_PROTO_URI_INDEX, "kunyichen.wordpress.com");
-		setProto(handle, AOA_PROTO_SERIAL_INDEX, "12345678-001");
-#else
-		setProto(handle, AOA_PROTO_MANUFACTURE_INDEX, ADK2012_MANUFACTURE_STRING);
-		setProto(handle, AOA_PROTO_MODEL_INDEX, ADK2012_MODEL_STRING);
-		setProto(handle, AOA_PROTO_DESCRIPTION_INDEX, ADK2012_DESCRIPTION_STRING);
-		setProto(handle, AOA_PROTO_VERSION_INDEX, ADK2012_VERSION_STRING);
-		setProto(handle, AOA_PROTO_URI_INDEX, ADK2012_URI_STRING);
-		setProto(handle, AOA_PROTO_SERIAL_INDEX, ADK2012_SERIAL_STRING);
-#endif
-
-		if (protocol == 2) {
-			setAudioMode(handle, true);
-		}
-		switchToAccessoryMode(handle);
-
-error:
-		if (handle)
-			libusb_close(handle);
-	}
-	
+	found = findInterseting(list, count);
+	if (found) enableAccessoryMode(found);
 	libusb_free_device_list(list,1);
 
 	sleep(2); // for device re-attached again
@@ -290,18 +327,7 @@ error:
 	//
 	count = libusb_get_device_list(context, &list);
 	assert(count > 0);
-
-	found = NULL;
-	for (size_t idx = 0; idx < count; ++idx) {
-	        libusb_device *device = list[idx];
-	        libusb_device_descriptor desc = {0};
-	        rc = libusb_get_device_descriptor(device, &desc);
-	        assert(rc == 0);
-		if (isAccessoryDevice(&desc)) {
-			found = device;
-			break;
-		}
-	}
+	found = findAccessoryDevice(list, count);
 
 	if (!found) {
 		printf("success switch to accessory mode\n");
@@ -313,7 +339,6 @@ error:
 	//
 	libusb_get_device_descriptor(found, &desc_dev);
 	prt_dev_desc(&desc_dev);
-
 
 final:
 	libusb_free_device_list(list,1);
@@ -343,4 +368,36 @@ void prt_dev_desc(libusb_device_descriptor *desc)
 	printf("Device Protocol:0x%02x, MaxPacketSize of ep0:%4d\n", desc->bDeviceProtocol, desc->bMaxPacketSize0);
 	printf("Num of Configurations:%d\n", desc->bNumConfigurations);
 	printf("\n\n");
+}
+
+const char* formatLibUsbError(int errcode)
+{
+	const char* result = NULL;
+	struct {
+		int code;
+		const char* string;
+	} err_table[] = {
+		{ LIBUSB_SUCCESS, "LIBUSB_SUCCESS" },
+		{ LIBUSB_ERROR_IO, "LIBUSB_ERROR_IO" },
+		{ LIBUSB_ERROR_INVALID_PARAM, "LIBUSB_ERROR_INVALID_PARAM" },
+		{ LIBUSB_ERROR_ACCESS, "LIBUSB_ERROR_ACCESS" },
+		{ LIBUSB_ERROR_NO_DEVICE, "LIBUSB_ERROR_NO_DEVICE" },
+		{ LIBUSB_ERROR_NOT_FOUND, "LIBUSB_ERROR_NOT_FOUND" },
+		{ LIBUSB_ERROR_BUSY, "LIBUSB_ERROR_BUSY" },
+		{ LIBUSB_ERROR_TIMEOUT, "LIBUSB_ERROR_TIMEOUT" },
+		{ LIBUSB_ERROR_OVERFLOW, "LIBUSB_ERROR_OVERFLOW" },
+		{ LIBUSB_ERROR_PIPE, "LIBUSB_ERROR_PIPE" },
+		{ LIBUSB_ERROR_INTERRUPTED, "LIBUSB_ERROR_INTERRUPTED" },
+		{ LIBUSB_ERROR_NO_MEM, "LIBUSB_ERROR_NO_MEM" },
+		{ LIBUSB_ERROR_NOT_SUPPORTED, "LIBUSB_ERROR_NOT_SUPPORTED" },
+		{ LIBUSB_ERROR_OTHER, "LIBUSB_ERROR_OTHER" },
+		{ 0, NULL },
+	};
+
+	if ((errcode <= 0) && (errcode >= LIBUSB_ERROR_NOT_SUPPORTED)) {
+		result = err_table[0-errcode].string;
+	} else {
+		result = err_table[0-LIBUSB_ERROR_OTHER].string;
+	}
+	return result;
 }
