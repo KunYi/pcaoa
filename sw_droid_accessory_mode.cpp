@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <libusb-1.0/libusb.h> 
 #include <alsa/asoundlib.h>
+#include <pthread.h>
 
 /* Samsung N7100 04e8:6866 */
 #define VID_TEST (0x04e8)
@@ -60,10 +61,68 @@
 #define ADK2012_URI_STRING				("http://www.android.com")
 #define ADK2012_SERIAL_STRING				("0000000012345678")
 
+
+//android app needs to match this
+#define BT_ADK_UUID	0x1d, 0xd3, 0x50, 0x50, 0xa4, 0x37, 0x11, 0xe1, 0xb3, 0xdd, 0x08, 0x00, 0x20, 0x0c, 0x9a, 0x66
+
+#define SETTINGS_MAGIX					(0xAF)
+typedef struct AdkSettings {
+		uint8_t magix;
+		uint8_t ver;
+
+// v1 settings:
+		uint8_t R, G, B, brightness, volume, alramHour, alramMin, alramOn;
+		char btName[249];
+		char btPIN[17];
+
+		uint16_t  alramSnooze;
+		char		alramTune[256];
+
+		uint8_t speed, displayMode;
+// later settings
+} AdkSettings;
+
+/*
+ * ADK2012 oem/user protocol definition
+ * from adk2012/board/MakefileBasedBuild/app/main.c
+ * maximum packet size is 260 bytes, 256b payload + header
+ *	command header 4 bytes
+ *		u8 command opcode
+ *		u8 sequence
+ *		u16 size
+ *
+ *
+ *	data formats:
+ *		timespec = (year, month, day, hour, min, sec) (u16,u8,u8,u8,u8,u8)
+ */
+// command opcode defined
+#define CMD_MASK_REPLY				(0x80)
+#define BT_CMD_GET_PROTO_VERSION		(1)
+#define BT_CMD_GET_SENSORS			(2)
+#define BT_CMD_FILE_LIST			(3)
+#define BT_CMD_FILE_DELETE			(4)
+#define BT_CMD_FILE_OPEN			(5)
+#define BT_CMD_FILE_WRITE			(6)
+#define BT_CMD_FILE_CLOSE			(7)
+#define BT_CMD_GET_UNIQ_ID			(8)
+#define BT_CMD_BT_NAME				(9)
+#define BT_CMD_BT_PIN				(10)
+#define BT_CMD_TIME				(11)
+#define BT_CMD_SETTINGS				(12)
+#define BT_CMD_ALARM_FILE			(13)
+#define BT_CMD_GET_LICENSE			(14)
+#define BT_CMD_DISPLAY_MODE			(15)
+#define BT_CMD_LOCK				(16)
+
+#define BT_PROTO_VERSION_1			(1)
+
+#define BT_PROTO_VERSION_CURRENT		BT_PROTO_VERSION_1
+
 static libusb_context *context = NULL;
 static libusb_device **list = NULL;
 static libusb_device *found = NULL;
 static libusb_device_descriptor desc_dev = {0};
+static AdkSettings settings = {0};
 
 /*
  * Audio only support 2 channel, 16-bit PCM audio format 
@@ -123,14 +182,45 @@ bool isInteresting(libusb_device* device, uint16_t vid, uint16_t pid);
 bool isAccessoryDevice(libusb_device_descriptor  *desc);
 void prt_dev_desc(libusb_device_descriptor *desc);
 
+void* prtPThread(void *threadid)
+{
+	printf("Hello world of pthread, tid:%ld\n", *((long*)threadid));
+
+	pthread_exit(NULL);
+	return NULL;
+}
+
+pthread_t threads[3];
+
+static void initSettings(void) {
+	strcpy(settings.btName, "ADK 2012");
+	strcpy(settings.btPIN, "1337");
+	settings.magix = SETTINGS_MAGIX;
+	settings.ver = 1;
+	settings.R = 0;
+	settings.G = 0;
+	settings.B = 255;
+	settings.brightness = 255;
+	settings.volume = 255;
+	settings.alramHour = 6;
+	settings.alramMin = 0;
+	settings.alramOn = 0;
+	settings.speed = 1;
+	settings. displayMode = 0; // AdkShowAnimation
+	settings.alramSnooze = 10 * 60; // 10-minute alram
+	strcpy(settings.alramTune, "Alram.ogg");
+}
 
 int main() {
 	int rc = 0;
+	long tid = 1;
 	size_t count = 0;
 
+	initSettings();
 	rc = libusb_init(&context);
 	assert(rc == 0);
-	
+
+	pthread_create(&threads[0], NULL, prtPThread, (void*)&tid);
 	count = libusb_get_device_list(context, &list);
 	assert(count > 0);
 	for (size_t idx = 0; idx < count; ++idx) {
@@ -228,6 +318,7 @@ error:
 final:
 	libusb_free_device_list(list,1);
 	libusb_exit(context);
+	pthread_exit(NULL);
 }
 
 bool isInteresting(libusb_device* device, uint16_t vid, uint16_t pid) {
