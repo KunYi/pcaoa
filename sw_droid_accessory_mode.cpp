@@ -6,15 +6,16 @@
 #include <alsa/asoundlib.h>
 #include <pthread.h>
 
-#if 0
-/* Samsung N7100 VID:PID(04e8:6866) */
-#define VID_TEST (0x04e8)
-#define PID_TEST (0x6866)
-#else
-/* Xaomi hougmi  VID:PID(2717:1220) */
-#define VID_TEST (0x2717)
-#define PID_TEST (0x1220)
-#endif
+
+struct {
+	const uint16_t vid;
+	const uint16_t pid;
+} const supportlists[] = {
+	{ 0x04e8, 0x6866 }, /* Samsung GT-N7100		*/
+	{ 0x2717, 0x1220 }, /* Xaomi HougMi		*/
+	{ 0x0451, 0xd109 }, /* Texas Instruments Blaze	*/
+	{ 0x0000, 0x0000 }, /* end of list		*/
+};
 
 /* 
  * AOA 2.0 protocol
@@ -180,9 +181,11 @@ int setAudioMode(libusb_device_handle *dev, bool mode)
 }
 
 const char* formatLibUsbError(int errcode);
-bool isInteresting(libusb_device* device, uint16_t vid, uint16_t pid);
+bool isInteresting(uint16_t vid, uint16_t pid);
 bool isAccessoryDevice(libusb_device_descriptor  *desc);
 void prt_dev_desc(libusb_device_descriptor *desc);
+void prt_dev_conf(libusb_config_descriptor *desc);
+void prt_dev_if(const libusb_interface *If);
 
 void* prtPThread(void *threadid)
 {
@@ -223,7 +226,7 @@ static libusb_device*  findInterseting(libusb_device **list, size_t sz)
 		libusb_device_descriptor desc = {0};
 		rc = libusb_get_device_descriptor(device, &desc);
 		assert(rc == 0);
-		if (isInteresting(device, VID_TEST, PID_TEST)) {
+		if (isInteresting(desc.idVendor,desc.idProduct)) {
 			dev = device;
 		}
 	}
@@ -320,6 +323,10 @@ int main() {
 	found = findInterseting(list, count);
 	if (found) enableAccessoryMode(found);
 	libusb_free_device_list(list,1);
+	if (!found) {
+		printf("Failed!! not found android device\n");
+		goto exit1;
+	}
 
 	sleep(2); // for device re-attached again
 	//
@@ -330,8 +337,8 @@ int main() {
 	found = findAccessoryDevice(list, count);
 
 	if (!found) {
-		printf("success switch to accessory mode\n");
-		goto final;
+		printf("Faild!! switch to accessory mode\n");
+		goto exit;
 	}
 
 	//
@@ -339,17 +346,31 @@ int main() {
 	//
 	libusb_get_device_descriptor(found, &desc_dev);
 	prt_dev_desc(&desc_dev);
+	libusb_config_descriptor *config_desc;
+	for(int i = 0; i < desc_dev.bNumConfigurations; i++) {
+		libusb_get_config_descriptor(found, i, &config_desc);
+		prt_dev_conf(config_desc);
+		libusb_free_config_descriptor(config_desc);
+	}
 
-final:
+exit:
 	libusb_free_device_list(list,1);
+exit1:
 	libusb_exit(context);
 	pthread_exit(NULL);
 }
 
-bool isInteresting(libusb_device* device, uint16_t vid, uint16_t pid) {
-	libusb_device_descriptor desc = { 0 };
-	libusb_get_device_descriptor(device, & desc);
-return ((desc.idVendor == vid) && (desc.idProduct == pid)) ? true : false;
+bool isInteresting(uint16_t vid, uint16_t pid)
+{
+	int idx = 0;
+	for(;;) {
+		if ((supportlists[idx].vid == vid) && (supportlists[idx].pid == pid))
+			return true;
+		if ((supportlists[idx].vid == 0) && (supportlists[idx].pid == 0))
+			break;
+		idx++;
+	}
+	return false;
 }
 
 bool isAccessoryDevice(libusb_device_descriptor* desc)
@@ -361,13 +382,43 @@ bool isAccessoryDevice(libusb_device_descriptor* desc)
 
 void prt_dev_desc(libusb_device_descriptor *desc)
 {
-	printf("\n\n");
+	printf("--------------------------------------------------------------------------------\n");
 	printf("dump device description\n");
 	printf("Accessory(%04x:%04x)\n", desc->idVendor, desc->idProduct);
 	printf("DeviceClass:0x%02x, Subclass:0x%02x\n", desc->bDeviceClass, desc->bDeviceSubClass);
 	printf("Device Protocol:0x%02x, MaxPacketSize of ep0:%4d\n", desc->bDeviceProtocol, desc->bMaxPacketSize0);
 	printf("Num of Configurations:%d\n", desc->bNumConfigurations);
-	printf("\n\n");
+	printf("--------------------------------------------------------------------------------\n");
+}
+
+void prt_dev_conf(libusb_config_descriptor *desc)
+{
+	printf("--------------------------------------------------------------------------------\n");
+	printf("dump configuration description\n");
+	printf("wTotalLength:%d\n", desc->wTotalLength);
+	printf("bNumInterfaces:%d\n", desc->bNumInterfaces);
+	printf("bConfigurationValue:%d\n", desc->bConfigurationValue);
+	printf("iConfiguration:%d\n", desc->iConfiguration);
+	printf("bmAttributes:0x%02x\n", desc->bmAttributes);
+	for(int idx = 0; idx < desc->bNumInterfaces; idx++)
+	{
+		const libusb_interface* If = &(desc->interface[idx]);
+		prt_dev_if(If);
+	}
+	printf("--------------------------------------------------------------------------------\n");
+}
+
+void prt_dev_if(const libusb_interface *If)
+{
+	const libusb_interface_descriptor *IfDesc = (If->altsetting);
+	printf("--------------------------------------------------------------------------------\n");
+	printf("interface num:%d\n", If->num_altsetting);
+	printf("bInterfaceNumber:%d\n", IfDesc->bInterfaceNumber);
+	printf("bAlternateSetting:%d\n", IfDesc->bAlternateSetting);
+	printf("bNumEndpoints:%d\n", IfDesc->bNumEndpoints);
+	printf("bInterfaceClass:%d, bInterfaceSubClass:%d, bInterfaceProtocol:%d\n", IfDesc->bInterfaceClass,
+			IfDesc->bInterfaceSubClass, IfDesc->bInterfaceProtocol);
+	printf("--------------------------------------------------------------------------------\n");
 }
 
 const char* formatLibUsbError(int errcode)
